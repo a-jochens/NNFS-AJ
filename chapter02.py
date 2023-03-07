@@ -3,6 +3,8 @@
 # Chapter 2
 # Coding Our First Neurons
 
+import numpy as np
+
 inputs = [1, 2, 3, 2.5]
 
 weights = [[0.2, 0.8, -0.5, 1.0],
@@ -11,7 +13,6 @@ weights = [[0.2, 0.8, -0.5, 1.0],
 
 biases = [2, 3, 0.5]
 
-layer_outputs = [sum(i * w for i, w, in zip(inputs, weights[n])) + biases[n] 
-                 for n in range(3)]
+layer_outputs = np.dot(weights, inputs) + biases
 
 print(layer_outputs)
