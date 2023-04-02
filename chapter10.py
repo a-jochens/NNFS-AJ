@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
-# Chapter 9
-# Backpropagation
+# Chapter 10
+# Optimizers
 
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 
 import nnfs
 from nnfs.datasets import vertical_data, spiral_data
@@ -145,7 +145,7 @@ class Activation_Softmax_Loss_CategoricalCrossentropy():
         # Normalize gradient
         self.dinputs /= n_samples
 
-"""
+
 # X, y = vertical_data(samples=100, classes=3)
 X, y = spiral_data(samples=100, classes=3)
 # plt.scatter(X[:, 0], X[:, 1], c=y, cmap='brg')
@@ -201,38 +201,3 @@ print(dense1.dbiases)
 print(dense2.dweights)
 print(dense2.dbiases)
 
-"""
-
-
-# Test and compare backward steps
-
-from timeit import timeit
-
-softmax_outputs = np.array([[0.7, 0.1, 0.2],
-                            [0.1, 0.5, 0.4],
-                            [0.02, 0.9, 0.08]])
-class_targets = np.array([0, 1, 1])
-
-def f1():
-    softmax_loss = Activation_Softmax_Loss_CategoricalCrossentropy()
-    softmax_loss.backward(softmax_outputs, class_targets)
-    dvalues1 = softmax_loss.dinputs
-    return dvalues1
-
-def f2():
-    activation = Activation_Softmax()
-    activation.output = softmax_outputs
-    loss = Loss_CategoricalCrossentropy()
-    loss.backward(softmax_outputs, class_targets)
-    activation.backward(loss.dinputs)
-    dvalues2 = activation.dinputs
-    return dvalues2
-
-print("Gradients: combined loss and activation:")
-print(f1(), "\n")
-print("Gradients: separate loss and activation:")
-print(f2())
-
-t1 = timeit(lambda: f1(), number = 10_000)
-t2 = timeit(lambda: f2(), number = 10_000)
-print(t2 / t1)
