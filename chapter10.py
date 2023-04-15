@@ -62,11 +62,11 @@ class Activation_Softmax:
 
         # Calculate gradients sample-wise
         for i, (single_output, single_dvalues) in enumerate(zip(self.output, dvalues)):
-            # Flatten output array
+            # Reshape output array as one-column matrix
             single_output = single_output.reshape(-1, 1)
             # Calculate Jacobian matrix of the output
             jacobian_matrix = np.diagflat(single_output) - np.dot(single_output, single_output.T)
-            # Assign gradient
+            # Assign sample gradient to row in gradient array
             self.dinputs[i] = np.dot(jacobian_matrix, single_dvalues)
 
 
@@ -92,7 +92,7 @@ class Loss_CategoricalCrossentropy(Loss):
 
         # Probabilities for target values - only if categorical labels
         if len(y_true.shape) == 1:
-            correct_confidences = y_pred_clipped[:, y_true]
+            correct_confidences = y_pred_clipped[range(n_samples), y_true]
 
         # Mask values - only for one-hot encoded labels
         elif len(y_true.shape) == 2:
@@ -146,58 +146,64 @@ class Activation_Softmax_Loss_CategoricalCrossentropy():
         self.dinputs /= n_samples
 
 
+class Optimizer_SGD:
+    """Stochastic Gradient Descent"""
+
+    # Set (default) hyperparameters
+    def __init__(self, learning_rate=1.0):
+        self.learning_rate = learning_rate
+
+    def update_params(self, layer):
+        layer.weights -= self.learning_rate * layer.dweights
+        layer.biases -= self.learning_rate * layer.dbiases
+
+
 # X, y = vertical_data(samples=100, classes=3)
 X, y = spiral_data(samples=100, classes=3)
 # plt.scatter(X[:, 0], X[:, 1], c=y, cmap='brg')
 # plt.show()
 
-
-# Create dense layer with 2 input features and 3 output values
-dense1 = Layer_Dense(2, 3)
+# Create dense layer with 2 input features and 64 output values
+dense1 = Layer_Dense(2, 64)
 
 # Create ReLU activation (to be used with dense layer)
 activation1 = Activation_ReLU()
 
-# Create second dense layer with 3 input features (matching output of previous layer) 
+# Create second dense layer with 64 input features (matching output of previous layer) 
 # and 3 output values (matching 3 classes in the data)
-dense2 = Layer_Dense(3, 3)
+dense2 = Layer_Dense(64, 3)
 
 # Create softmax classifier's combined loss and activation 
 loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
 
 
-# Perform a forward pass of our training data through these layers
-dense1.forward(X)
-activation1.forward(dense1.output)
-dense2.forward(activation1.output)
-loss = loss_activation.forward(dense2.output, y)
+optimizer = Optimizer_SGD()
 
-# Show output of the first few samples
-print(loss_activation.output[:5])    
+# Training loop
+for epoch in range(10_001):
 
-# Show loss value
-print('loss:', loss)
-  
-# Calculate accuracy
-predictions = np.argmax(loss_activation.output, axis=1)
-if len(y.shape) == 2:  # if one-hot encoded
-    y = np.argmax(y, axis=1)  # revert to flat encoding 
-accuracy = np.mean(predictions == y)
-print('accuracy:', accuracy)
+    # Perform a forward pass of our training data through these layers
+    dense1.forward(X)
+    activation1.forward(dense1.output)
+    dense2.forward(activation1.output)
+    loss = loss_activation.forward(dense2.output, y)
+    
+    # Calculate accuracy
+    predictions = np.argmax(loss_activation.output, axis=1)
+    if len(y.shape) == 2:  # if one-hot encoded
+        y = np.argmax(y, axis=1)  # revert to flat encoding 
+    accuracy = np.mean(predictions == y)
 
-# Show confidence scores for first few samples
-# print(activation2.output[:5])
+    if not epoch % 100:
+        print(f"epoch: {epoch}, accuracy: {accuracy:.3f}, loss: {loss:.3f}")
 
+    # Backward pass (backpropagation)
+    loss_activation.backward(loss_activation.output, y)
+    dense2.backward(loss_activation.dinputs)
+    activation1.backward(dense2.dinputs)
+    dense1.backward(activation1.dinputs)
 
-# Backward pass
-loss_activation.backward(loss_activation.output, y)
-dense2.backward(loss_activation.dinputs)
-activation1.backward(dense2.dinputs)
-dense1.backward(activation1.dinputs)
-
-# Print gradients
-print(dense1.dweights)
-print(dense1.dbiases)
-print(dense2.dweights)
-print(dense2.dbiases)
+    # Update weights and biases
+    optimizer.update_params(dense1)
+    optimizer.update_params(dense2)
 
