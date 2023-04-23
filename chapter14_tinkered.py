@@ -387,16 +387,32 @@ class Optimizer_Adam:
         self.iterations += 1
 
 
-# Create dense layer with 2 input features and 512 output values
+# Create dense layer with 2 input features and 64 output values
 dense1 = Layer_Dense(2, 512, weight_regularizer_l2=5e-4,
                              bias_regularizer_l2=5e-4)
 
 # Create ReLU activation (to be used with dense layer)
 activation1 = Activation_ReLU()
 
-# Create second dense layer with 512 input features (matching output of previous layer) 
+
+
+
+
+# More layers
+dense2 = Layer_Dense(512, 512, weight_regularizer_l2=5e-4,
+                               bias_regularizer_l2=5e-4)
+activation2 = Activation_ReLU()
+dense3 = Layer_Dense(512, 512, weight_regularizer_l2=5e-4,
+                               bias_regularizer_l2=5e-4)
+activation3 = Activation_ReLU()
+
+
+
+
+
+# Create second dense layer with 64 input features (matching output of previous layer) 
 # and 3 output values (matching 3 classes in the data)
-dense2 = Layer_Dense(512, 3)
+dense4 = Layer_Dense(512, 3)
 
 # Create softmax classifier's combined loss and activation 
 loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
@@ -408,7 +424,7 @@ optimizer = Optimizer_Adam(learning_rate=0.02, decay=5e-7)
 
 
 # Training data
-X, y = spiral_data(samples=1000, classes=3)
+X, y = spiral_data(samples=10_000, classes=3)
 # plt.scatter(X[:, 0], X[:, 1], c=y, cmap='brg')
 # plt.show()
 
@@ -418,12 +434,22 @@ for epoch in range(10_001):
     # Perform a forward pass of our training data through these layers
     dense1.forward(X)
     activation1.forward(dense1.output)
+
+
     dense2.forward(activation1.output)
-    data_loss = loss_activation.forward(dense2.output, y)
+    activation2.forward(dense2.output)
+    dense3.forward(activation2.output)
+    activation3.forward(dense3.output)
+
+
+    dense4.forward(activation3.output)
+    data_loss = loss_activation.forward(dense4.output, y)
     
     # Calculate regularization penalty and overall loss
     regularization_loss = (loss_activation.loss.regularization_loss(dense1)
-                           + loss_activation.loss.regularization_loss(dense2))
+                           + loss_activation.loss.regularization_loss(dense2)
+                           + loss_activation.loss.regularization_loss(dense3)
+                           + loss_activation.loss.regularization_loss(dense4))
     loss = data_loss + regularization_loss
 
     # Calculate accuracy
@@ -440,7 +466,13 @@ for epoch in range(10_001):
 
     # Backward pass (backpropagation)
     loss_activation.backward(loss_activation.output, y)
-    dense2.backward(loss_activation.dinputs)
+
+    dense4.backward(loss_activation.dinputs)
+    activation3.backward(dense4.dinputs)
+    dense3.backward(activation3.dinputs)
+    activation2.backward(dense3.dinputs)
+
+    dense2.backward(activation2.dinputs)
     activation1.backward(dense2.dinputs)
     dense1.backward(activation1.dinputs)
 
@@ -448,19 +480,29 @@ for epoch in range(10_001):
     optimizer.pre_update_params()
     optimizer.update_params(dense1)
     optimizer.update_params(dense2)
+
+    optimizer.update_params(dense3)
+    optimizer.update_params(dense4)
+
     optimizer.post_update_params()
 
 
 # Test model performance
 
 # Test data
-X_test, y_test = spiral_data(samples=1000, classes=3)
+X_test, y_test = spiral_data(samples=10_000, classes=3)
 
 # Forward pass of the test data
 dense1.forward(X_test)
 activation1.forward(dense1.output)
 dense2.forward(activation1.output)
-loss = loss_activation.forward(dense2.output, y_test)
+
+activation2.forward(dense2.output)
+dense3.forward(activation2.output)
+activation3.forward(dense3.output)
+dense4.forward(activation3.output)
+
+loss = loss_activation.forward(dense4.output, y_test)
 
 # Calculate accuracy
 predictions = np.argmax(loss_activation.output, axis=1)
