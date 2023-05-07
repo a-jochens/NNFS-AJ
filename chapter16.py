@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-# Chapter 15
-# Dropout Regularization
+# Chapter 16
+# Binary Logistic Regression
 
 import numpy as np
 import matplotlib.pyplot as plt
