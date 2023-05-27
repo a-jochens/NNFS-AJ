@@ -7,8 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import nnfs
-# from nnfs.datasets import vertical_data, spiral_data
-from nnfs.datasets import sine_data
+from nnfs.datasets import vertical_data, spiral_data, sine_data
 
 nnfs.init()  # Fix random seed for reproducibility,
              # set float32 as default dtype,
@@ -158,16 +157,11 @@ class Activation_Linear:
         return outputs
 
 
-class Loss:  # for all loss functions
-    """Calculate data and regularization losses, given model output and ground truth values."""
+class Loss:  
+    """Common methods for all loss functions."""
 
     def remember_trainable_layers(self, trainable_layers):
         self.trainable_layers = trainable_layers
-
-    def calculate(self, output, y):
-        sample_losses = self.forward(output, y)
-        data_loss = np.mean(sample_losses)
-        return data_loss, self.regularization_loss()
 
     def regularization_loss(self):
         regularization_loss = 0
@@ -181,6 +175,17 @@ class Loss:  # for all loss functions
             if layer.bias_regularizer_l2 > 0:
                 regularization_loss += layer.bias_regularizer_l2 * np.sum(layer.biases ** 2)
         return regularization_loss
+    
+    def calculate(self, output, y, *, include_regularization=False):
+        """Calculate data and regularization losses, given model output and ground truth values."""
+        
+        sample_losses = self.forward(output, y)
+        data_loss = np.mean(sample_losses)
+        
+        if not include_regularization:
+            return data_loss
+        
+        return data_loss, self.regularization_loss()
 
 
 class Loss_CategoricalCrossentropy(Loss):
@@ -518,6 +523,24 @@ class Accuracy:
         return accuracy
 
 
+class Accuracy_Categorical(Accuracy):
+    """Accuracy calculation for classification models."""
+
+    def __init__(self, *, binary=False):
+        self.binary = binary
+
+    def init(self, y):
+        """No initialization is needed here."""
+        pass
+
+    def compare(self, predictions, y):
+        """Are the predictions correct?"""
+        # Translate one-hot encoding to sparse one if necessary.
+        if not self.binary and len(y.shape) == 2:
+            y = np.argmax(y, axis=1)
+        return predictions == y
+    
+
 class Accuracy_Regression(Accuracy):
     """Accuracy calculation for regression models."""
 
@@ -525,7 +548,8 @@ class Accuracy_Regression(Accuracy):
         self.precision = None
 
     def init(self, y, reinit=False):
-        """Calculate precision based on ground truth y."""
+        """Calculate precision (based on ground truth y).
+        This is an arbitrarily defined tolerance bound for the residuals."""
         if self.precision is None or reinit:
             self.precision = np.std(y) / 250
 
@@ -580,7 +604,13 @@ class Model:
             if hasattr(layer, 'weights'):
                 self.trainable_layers.append(layer)
 
-    def train(self, X, y, *, epochs=1, print_every=1):
+        # Update loss object with the list of trainable layers.
+        self.loss.remember_trainable_layers(self.trainable_layers)
+
+    def train(self, X, y, *, epochs=1, print_every=1, test_data=None):
+        """Train the model on the data (X, y).
+        If test data (also a tuple of samples and targets) is passed,
+        then also test the trained model and print the results."""
 
         # Initialize accuracy object.
         self.accuracy.init(y)
@@ -592,13 +622,41 @@ class Model:
             output = self.forward(X)
 
             # Calculate data loss, regularization penalty, and overall loss.
-            data_loss, regularization_loss = self.loss.calculate(output, y)
+            data_loss, regularization_loss = self.loss.calculate(output, y,
+                                                                 include_regularization=True)
             loss = data_loss + regularization_loss
 
             # Get predictions and calculate an accuracy.
             predictions = self.output_layer_activation.predictions(output)
             accuracy = self.accuracy.calculate(predictions, y)
-            
+
+            # Perform backward pass through all layers.
+            self.backward(output, y)
+
+            # Optimize (update weights and biases).
+            self.optimizer.pre_update_params()
+            for layer in self.trainable_layers:
+                self.optimizer.update_params(layer)
+            self.optimizer.post_update_params()
+                
+            # Print a summary.
+            if not epoch % print_every:
+                print(f"epoch: {epoch}, acc: {accuracy:.3f},",
+                      f"loss: {loss:.3f} (data_loss: {data_loss:.3f},",
+                      f"reg_loss: {regularization_loss:.3f}),", 
+                      f"lr: {self.optimizer.current_learning_rate}")
+                
+        if test_data is not None:
+            X_test, y_test = test_data
+
+            # Test the trained model.
+            output = self.forward(X_test)
+            loss = self.loss.calculate(output, y_test)
+            predictions = self.output_layer_activation.predictions(output)
+            accuracy = self.accuracy.calculate(predictions, y_test)
+
+            # Print a summary.
+            print(f"\nTest accuracy: {accuracy:.3f} \nTest loss: {loss:.3f}")
 
     def forward(self, X):
         """Perform a forward pass of data X through the model layers."""
@@ -612,88 +670,39 @@ class Model:
         # Return output of the last layer.
         return layer.output
     
+    def backward(self, output, y):
+        """Backpropagate the gradient through the layers."""
 
+        # Set the dinputs property for the "next to last" layer,
+        # i.e. the end (/start) of the forward (/backward) chain.
+        self.loss.backward(output, y)
 
-
-
-
-"""        
-if not epoch % 100:
-    print(f"epoch: {epoch}, acc: {accuracy:.3f},",
-        f"loss: {loss:.3f} (data_loss: {data_loss:.3f},",
-        f"reg_loss: {regularization_loss:.3f}),", 
-        f"lr: {optimizer.current_learning_rate}")
-
-# Backward pass (backpropagation)
-loss_function.backward(activation3.output, y)
-activation3.backward(loss_function.dinputs)
-dense3.backward(activation3.dinputs)
-activation2.backward(dense3.dinputs)
-dense2.backward(activation2.dinputs)
-activation1.backward(dense2.dinputs)
-dense1.backward(activation1.dinputs)
-
-# Update weights and biases.
-optimizer.pre_update_params()
-optimizer.update_params(dense1)
-optimizer.update_params(dense2)
-optimizer.update_params(dense3)
-optimizer.post_update_params()
-"""
-
-
-# Training data
-X, y = sine_data()
-# plt.scatter(X[:, 0], X[:, 1], c=y, cmap='brg'); plt.show()
-
-# Tolerance bounds for accuracy calculation
-accuracy_precision = np.std(y) / 250
+        # Backpropagation
+        for layer in reversed(self.layers):
+            layer.backward(layer.next.dinputs)
 
 
 model = Model()
 
 # Add layers to the model.
-model.add(Layer_Dense(1, 64))
-model.add(Activation_ReLU())
-model.add(Layer_Dense(64, 64))
+model.add(Layer_Dense(2, 64, weight_regularizer_l2=5e-4, bias_regularizer_l2=5e-4))
 model.add(Activation_ReLU())
 model.add(Layer_Dense(64, 1))
-model.add(Activation_Linear())
+model.add(Activation_Sigmoid())
 
-# Set loss and optimizer objects.
-model.set(loss=Loss_MeanSquaredError(),
-          optimizer=Optimizer_Adam(learning_rate=0.005, decay=1e-3))
-
+# Set model properties.
+model.set(loss=Loss_BinaryCrossentropy(),
+          optimizer=Optimizer_Adam(decay=5e-7),
+          accuracy=Accuracy_Categorical(binary=True))
 model.finalize()
-model.train(X, y, epochs=10_000, print_every=100)
 
+# Generate training and testing datasets.
+X, y = spiral_data(samples=100, classes=2)
+X_test, y_test = spiral_data(samples=100, classes=2)
 
+# Reshape labels to be a list of (one-item) lists.
+y = y.reshape(-1, 1)
+y_test = y_test.reshape(-1, 1)
 
-
-
-    
-
-"""
-# Test model performance.
-
-X_test, y_test = sine_data()
-
-# Forward pass of the test data
-dense1.forward(X_test)
-activation1.forward(dense1.output)
-dense2.forward(activation1.output)
-activation2.forward(dense2.output)
-dense3.forward(activation2.output)
-activation3.forward(dense3.output)
-
-plt.plot(X_test, y_test)
-plt.plot(X_test, activation3.output)
-plt.show()
-
-loss = loss_function.calculate(activation3.output, y_test)
-
-# Calculate test accuracy according to custom precision.
-predictions = activation3.output 
-accuracy = np.mean(np.abs(predictions - y_test) < accuracy_precision)
-print(f"\nTest accuracy: {accuracy:.3f} \nTest loss: {loss:.3f}")
-"""
+# Train and test the model.
+model.train(X, y, epochs=10_000, print_every=100, test_data=(X_test, y_test))
