@@ -17,7 +17,7 @@ nnfs.init()  # Fix random seed for reproducibility,
 class Layer_Input:
     """Pseudo-layer, to be used in training loop."""
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
         self.output = inputs
 
 
@@ -34,7 +34,7 @@ class Layer_Dense:
         self.bias_regularizer_l1 = bias_regularizer_l1
         self.bias_regularizer_l2 = bias_regularizer_l2
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
         """Calculate output values from inputs, weights and biases"""
         self.inputs = inputs  # Remember input values
         self.output = np.dot(inputs, self.weights) + self.biases
@@ -73,8 +73,14 @@ class Layer_Dropout:
         # but stored as the retention rate.
         self.rate = 1 - rate
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
         self.inputs = inputs
+
+        # We only want dropout during training, not for later predictions.
+        if not training:
+            self.output = inputs.copy()
+            return
+
         # Generate and save scaled mask.
         self.binary_mask = np.random.binomial(1, self.rate, size=inputs.shape) / self.rate
         # Apply mask to output values.
@@ -87,7 +93,7 @@ class Layer_Dropout:
 
 class Activation_ReLU:
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
         self.inputs = inputs  # Remember input values
         self.output = np.maximum(0, inputs)
 
@@ -101,7 +107,7 @@ class Activation_ReLU:
 
 class Activation_Softmax:
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
 
         # Remember input values
         self.inputs = inputs
@@ -129,7 +135,7 @@ class Activation_Softmax:
 
 class Activation_Sigmoid:
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
         """Save input and calculate/save output of the sigmoid function."""
         self.inputs = inputs
         self.output = 1 / (1 + np.exp(-inputs))
@@ -145,7 +151,7 @@ class Activation_Sigmoid:
 class Activation_Linear:
     """Just for program consistency; does not alter the data."""
 
-    def forward(self, inputs):
+    def forward(self, inputs, training):
         """Just remember the values."""
         self.inputs = inputs
         self.output = inputs
@@ -209,6 +215,19 @@ class Loss_CategoricalCrossentropy(Loss):
 
         # Losses
         negative_log_confidences = -np.log(correct_confidences)
+
+
+
+
+        #if float('inf') in negative_log_confidences:
+        #    print(f"y_pred: {y_pred}")
+        #    print(f"y_pred_clipped: {y_pred_clipped}")
+        #    print(f"correct confidences: {correct_confidences}")
+
+
+
+
+
         return negative_log_confidences
 
     def backward(self, dvalues, y_true):
@@ -226,18 +245,6 @@ class Loss_CategoricalCrossentropy(Loss):
 
 class Activation_Softmax_Loss_CategoricalCrossentropy():
     """Combined softmax activation and cross-entropy loss for faster backward step"""
-
-    def __init__(self):
-        self.activation = Activation_Softmax()
-        self.loss = Loss_CategoricalCrossentropy()
-
-    def forward(self, inputs, y_true):
-        # Output layer's activation function
-        self.activation.forward(inputs)
-        # Set the output
-        self.output = self.activation.output
-        # Calculate loss
-        return self.loss.calculate(self.output, y_true)
 
     def backward(self, dvalues, y_true):
 
@@ -563,6 +570,8 @@ class Model:
     def __init__(self):
         # Create a list of network objects.
         self.layers = []
+        # Special object for softmax activation combined with cross-entropy loss.
+        self.softmax_classifier_output = None
 
     def add(self, layer):
         """Add a layer (or similar object) to the model."""
@@ -607,6 +616,13 @@ class Model:
         # Update loss object with the list of trainable layers.
         self.loss.remember_trainable_layers(self.trainable_layers)
 
+        # If output activation is Softmax and loss function is Categorical Cross-Entropy,
+        # then create an object of combined activation and loss function,
+        # for faster gradient calculation.
+        if (isinstance(self.layers[-1], Activation_Softmax) and
+            isinstance(self.loss, Loss_CategoricalCrossentropy)):
+            self.softmax_classifier_output = Activation_Softmax_Loss_CategoricalCrossentropy()
+
     def train(self, X, y, *, epochs=1, print_every=1, test_data=None):
         """Train the model on the data (X, y).
         If test data (also a tuple of samples and targets) is passed,
@@ -619,7 +635,7 @@ class Model:
         for epoch in range(1, epochs + 1):
             
             # Perform forward pass through all layers.
-            output = self.forward(X)
+            output = self.forward(X, training=True)
 
             # Calculate data loss, regularization penalty, and overall loss.
             data_loss, regularization_loss = self.loss.calculate(output, y,
@@ -650,7 +666,7 @@ class Model:
             X_test, y_test = test_data
 
             # Test the trained model.
-            output = self.forward(X_test)
+            output = self.forward(X_test, training=False)
             loss = self.loss.calculate(output, y_test)
             predictions = self.output_layer_activation.predictions(output)
             accuracy = self.accuracy.calculate(predictions, y_test)
@@ -658,20 +674,31 @@ class Model:
             # Print a summary.
             print(f"\nTest accuracy: {accuracy:.3f} \nTest loss: {loss:.3f}")
 
-    def forward(self, X):
+    def forward(self, X, training):
         """Perform a forward pass of data X through the model layers."""
 
         # Set the output that the first layer is expecting as prev.
-        self.input_layer.forward(X)
+        self.input_layer.forward(X, training)
 
         for layer in self.layers:
-            layer.forward(layer.prev.output)
+            layer.forward(layer.prev.output, training)
 
         # Return output of the last layer.
         return layer.output
     
     def backward(self, output, y):
         """Backpropagate the gradient through the layers."""
+
+        # Special case: softmax activation combined with cross-entropy loss.
+        if self.softmax_classifier_output is not None:
+            # Set the dinputs property.
+            self.softmax_classifier_output.backward(output, y)
+            # Instead of calling the backward method on the last layer, assign these dinputs.
+            self.layers[-1].dinputs = self.softmax_classifier_output.dinputs
+            # Pass dinputs through all the other layers.
+            for layer in reversed(self.layers[:-1]):
+                layer.backward(layer.next.dinputs)
+            return
 
         # Set the dinputs property for the "next to last" layer,
         # i.e. the end (/start) of the forward (/backward) chain.
@@ -685,20 +712,22 @@ class Model:
 model = Model()
 
 # Add layers to the model.
-model.add(Layer_Dense(2, 64, weight_regularizer_l2=5e-4, bias_regularizer_l2=5e-4))
+model.add(Layer_Dense(2, 512, weight_regularizer_l2=5e-4, 
+                      bias_regularizer_l2=5e-4))
 model.add(Activation_ReLU())
-model.add(Layer_Dense(64, 1))
-model.add(Activation_Sigmoid())
+model.add(Layer_Dropout(0.1))
+model.add(Layer_Dense(512, 3))
+model.add(Activation_Softmax())
 
 # Set model properties.
-model.set(loss=Loss_BinaryCrossentropy(),
-          optimizer=Optimizer_Adam(decay=5e-7),
+model.set(loss=Loss_CategoricalCrossentropy(),
+          optimizer=Optimizer_Adam(learning_rate=0.05, decay=5e-5),
           accuracy=Accuracy_Categorical(binary=True))
 model.finalize()
 
 # Generate training and testing datasets.
-X, y = spiral_data(samples=100, classes=2)
-X_test, y_test = spiral_data(samples=100, classes=2)
+X, y = spiral_data(samples=1000, classes=3)
+X_test, y_test = spiral_data(samples=100, classes=3)
 
 # Reshape labels to be a list of (one-item) lists.
 y = y.reshape(-1, 1)
