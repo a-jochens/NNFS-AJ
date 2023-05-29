@@ -215,19 +215,6 @@ class Loss_CategoricalCrossentropy(Loss):
 
         # Losses
         negative_log_confidences = -np.log(correct_confidences)
-
-
-
-
-        #if float('inf') in negative_log_confidences:
-        #    print(f"y_pred: {y_pred}")
-        #    print(f"y_pred_clipped: {y_pred_clipped}")
-        #    print(f"correct confidences: {correct_confidences}")
-
-
-
-
-
         return negative_log_confidences
 
     def backward(self, dvalues, y_true):
@@ -722,16 +709,12 @@ model.add(Activation_Softmax())
 # Set model properties.
 model.set(loss=Loss_CategoricalCrossentropy(),
           optimizer=Optimizer_Adam(learning_rate=0.05, decay=5e-5),
-          accuracy=Accuracy_Categorical(binary=True))
+          accuracy=Accuracy_Categorical(binary=False))
 model.finalize()
 
 # Generate training and testing datasets.
 X, y = spiral_data(samples=1000, classes=3)
 X_test, y_test = spiral_data(samples=100, classes=3)
-
-# Reshape labels to be a list of (one-item) lists.
-y = y.reshape(-1, 1)
-y_test = y_test.reshape(-1, 1)
 
 # Train and test the model.
 model.train(X, y, epochs=10_000, print_every=100, test_data=(X_test, y_test))
