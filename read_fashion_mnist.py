@@ -35,4 +35,4 @@ def create_data_mnist(path):
 
 
 # from read_fashion_mnist import create_data_mnist
-# X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
+# X, y, X_test, y_test = create_data_mnist("C:\\Users\\AJ\\fashion_mnist_images")

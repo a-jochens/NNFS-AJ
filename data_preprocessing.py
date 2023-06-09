@@ -5,8 +5,6 @@ import numpy as np
 import nnfs
 nnfs.init()
 
-from read_fashion_mnist import create_data_mnist
-
 
 def scale_pixels(image_array):
     half_max = 127.5
@@ -23,17 +21,24 @@ def shuffle_data(samples, labels):
     return samples[keys], labels[keys]
 
 
-X, y, X_test, y_test = create_data_mnist('fashion_mnist_images')
+def preprocess_image_data(X, y, X_test, y_test):
+    """Pipeline including all the above functions."""
 
-X = scale_pixels(X)
-X_test = scale_pixels(X_test)
+    X = scale_pixels(X)
+    print(f"Training pixel values are now ranging from {X.min()} to {X.max()}.")
+    X_test = scale_pixels(X_test)
+    print(f"Testing pixel values are now ranging from {X_test.min()} to {X_test.max()}.")
 
-X = reshape_samples_to_1d(X)
-X_test = reshape_samples_to_1d(X_test)
+    X = reshape_samples_to_1d(X)
+    print(f"Training data shape is now {X.shape}.")
+    X_test = reshape_samples_to_1d(X_test)
+    print(f"Testing data shape is now {X_test.shape}.")
 
-X, y = shuffle_data(X, y)
+    X, y = shuffle_data(X, y)
+    print(f"The training data are now shuffled, e.g. the first ten labels: {y[:10]}")
 
-print(X.min(), X.max())
-print(X.shape)
-print(X_test.shape)
-print(y[:10])
+    return X, y, X_test, y_test
+
+
+# from data_preprocessing import preprocess_image_data
+# X, y, X_test, y_test = preprocess_image_data(X, y, X_test, y_test)

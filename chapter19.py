@@ -7,11 +7,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import nnfs
-from nnfs.datasets import vertical_data, spiral_data, sine_data
-
 nnfs.init()  # Fix random seed for reproducibility,
              # set float32 as default dtype,
              # and customize np.dot().
+
+from read_fashion_mnist import create_data_mnist
+from data_preprocessing import preprocess_image_data
+
+DATA_PATH = "C:\\Users\\AJ\\fashion_mnist_images"
 
 
 class Layer_Input:
@@ -696,19 +699,10 @@ class Model:
             layer.backward(layer.next.dinputs)
 
 
+# Load and preprocess training and testing datasets.
+X, y, X_test, y_test = create_data_mnist(DATA_PATH)
+X, y, X_test, y_test = preprocess_image_data(X, y, X_test, y_test)
 
-
-
-
-
-
-
-
-
-
-# Generate training and testing datasets.
-#X, y = 
-#X_test, y_test = 
 
 """
 model = Model()
