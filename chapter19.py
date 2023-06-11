@@ -190,11 +190,31 @@ class Loss:
         
         sample_losses = self.forward(output, y)
         data_loss = np.mean(sample_losses)
-        
+
+        # Update variables for calculating overall sample-wise averages later. 
+        self.accumulated_sum += np.sum(sample_losses)
+        self.accumulated_count += len(sample_losses)
+
         if not include_regularization:
             return data_loss
         
         return data_loss, self.regularization_loss()
+    
+    def calculate_accumulated(self, *, include_regularization=False):
+        """Sample-wise average loss calculation."""
+
+        # Mean loss
+        data_loss = self.accumulated_sum / self.accumulated_count
+
+        if not include_regularization:
+            return data_loss
+        
+        return data_loss, self.regularization_loss()
+
+    def new_pass(self):
+        """Reset variables for accumulated loss."""
+        self.accumulated_sum = 0
+        self.accumulated_count = 0
 
 
 class Loss_CategoricalCrossentropy(Loss):
@@ -515,9 +535,25 @@ class Accuracy:
 
     def calculate(self, predictions, y):
         """Calculate accuracy from predictions and ground truth values y."""
+        
         comparisons = self.compare(predictions, y)
         accuracy = np.mean(comparisons)
+
+        # Update variables for calculating overall sample-wise averages later. 
+        self.accumulated_sum += np.sum(comparisons)
+        self.accumulated_count += len(comparisons)
+
         return accuracy
+    
+    def calculate_accumulated(self):
+        """Sample-wise average accuracy calculation."""
+        accuracy = self.accumulated_sum / self.accumulated_count
+        return accuracy
+
+    def new_pass(self):
+        """Reset variables for accumulated accuracy."""
+        self.accumulated_sum = 0
+        self.accumulated_count = 0
 
 
 class Accuracy_Categorical(Accuracy):
@@ -613,7 +649,8 @@ class Model:
             isinstance(self.loss, Loss_CategoricalCrossentropy)):
             self.softmax_classifier_output = Activation_Softmax_Loss_CategoricalCrossentropy()
 
-    def train(self, X, y, *, epochs=1, print_every=1, test_data=None):
+    def train(self, X, y, *, epochs=1, batch_size=None, 
+              print_every=1, test_data=None):
         """Train the model on the data (X, y).
         If test data (also a tuple of samples and targets) is passed,
         then also test the trained model and print the results."""
@@ -621,48 +658,101 @@ class Model:
         # Initialize accuracy object.
         self.accuracy.init(y)
 
-        # Main training loop
-        for epoch in range(1, epochs + 1):
-            
-            # Perform forward pass through all layers.
-            output = self.forward(X, training=True)
-
-            # Calculate data loss, regularization penalty, and overall loss.
-            data_loss, regularization_loss = self.loss.calculate(output, y,
-                                                                 include_regularization=True)
-            loss = data_loss + regularization_loss
-
-            # Get predictions and calculate an accuracy.
-            predictions = self.output_layer_activation.predictions(output)
-            accuracy = self.accuracy.calculate(predictions, y)
-
-            # Perform backward pass through all layers.
-            self.backward(output, y)
-
-            # Optimize (update weights and biases).
-            self.optimizer.pre_update_params()
-            for layer in self.trainable_layers:
-                self.optimizer.update_params(layer)
-            self.optimizer.post_update_params()
-                
-            # Print a summary.
-            if not epoch % print_every:
-                print(f"epoch: {epoch}, acc: {accuracy:.3f},",
-                      f"loss: {loss:.3f} (data_loss: {data_loss:.3f},",
-                      f"reg_loss: {regularization_loss:.3f}),", 
-                      f"lr: {self.optimizer.current_learning_rate}")
-                
+        # Default values if batch_size is None.
+        train_steps = 1
         if test_data is not None:
+            test_steps = 1
             X_test, y_test = test_data
 
-            # Test the trained model.
-            output = self.forward(X_test, training=False)
-            loss = self.loss.calculate(output, y_test)
-            predictions = self.output_layer_activation.predictions(output)
-            accuracy = self.accuracy.calculate(predictions, y_test)
+        # Calculate number of steps,
+        # using "upside down" floor division for ceiling division.
+        if batch_size is not None:
+            train_steps = -(len(X) // -batch_size)
+            if test_data is not None:
+                test_steps = -(len(X_test) // -batch_size)
 
-            # Print a summary.
-            print(f"\nTest accuracy: {accuracy:.3f} \nTest loss: {loss:.3f}")
+        # Main training loop
+        for epoch in range(1, epochs + 1):
+            print(f"epoch: {epoch}")
+
+            # Reset accumulated loss and accuracy values.
+            self.loss.new_pass()
+            self.accuracy.new_pass()
+
+            for step in range(train_steps):
+                
+                if batch_size is None:
+                    batch_X = X
+                    batch_y = y
+                else:
+                    batch_slice = np.slice(step * batch_size, (step + 1) * batch_size)
+                    batch_X = X[batch_slice]
+                    batch_y = y[batch_slice]
+
+                # Perform forward pass through all layers.
+                output = self.forward(batch_X, training=True)
+
+                # Calculate data loss, regularization penalty, and overall loss.
+                data_loss, regularization_loss = self.loss.calculate(output, batch_y,
+                                                                     include_regularization=True)
+                loss = data_loss + regularization_loss
+
+                # Get predictions and calculate an accuracy.
+                predictions = self.output_layer_activation.predictions(output)
+                accuracy = self.accuracy.calculate(predictions, batch_y)
+
+                # Perform backward pass through all layers.
+                self.backward(output, batch_y)
+
+                # Optimize (update weights and biases).
+                self.optimizer.pre_update_params()
+                for layer in self.trainable_layers:
+                    self.optimizer.update_params(layer)
+                self.optimizer.post_update_params()
+                    
+                # Print a summary.
+                if not step % print_every or step == train_steps - 1:
+                    print(f"step: {step}, acc: {accuracy:.3f},",
+                          f"loss: {loss:.3f} (data_loss: {data_loss:.3f},",
+                          f"reg_loss: {regularization_loss:.3f}),", 
+                          f"lr: {self.optimizer.current_learning_rate}")
+                
+            # Calculate and print epoch loss and accuracy.
+            epoch_data_loss, epoch_regularization_loss = \
+                self.loss.calculate_accumulated(include_regularization=True)
+            epoch_loss = epoch_data_loss + epoch_regularization_loss
+            epoch_accuracy = self.accuracy.calculate_accumulated()
+            print(f"Training\nacc: {epoch_accuracy:.3f},",
+                  f"loss: {epoch_loss:.3f} (data_loss: {epoch_data_loss:.3f},",
+                  f"reg_loss: {epoch_regularization_loss:.3f}),", 
+                  f"lr: {self.optimizer.current_learning_rate}")
+
+            if test_data is not None:
+                
+                # Reset accumulated loss and accuracy values.
+                self.loss.new_pass()
+                self.accuracy.new_pass()
+
+                for step in range(test_steps):
+                    
+                    if batch_size is None:
+                        batch_X = X_test
+                        batch_y = y_test
+                    else:
+                        batch_slice = np.slice(step * batch_size, (step + 1) * batch_size)
+                        batch_X = X_test[batch_slice]
+                        batch_y = y_test[batch_slice]
+
+                    # Test the trained model.
+                    output = self.forward(batch_X, training=False)
+                    self.loss.calculate(output, batch_y)
+                    predictions = self.output_layer_activation.predictions(output)
+                    self.accuracy.calculate(predictions, batch_y)
+
+                # Calculate and print test loss and accuracy.
+                test_loss = self.loss.calculate_accumulated()
+                test_accuracy = self.accuracy.calculate_accumulated()
+                print(f"Test\naccuracy: {test_accuracy:.3f}, loss: {test_loss:.3f}")
 
     def forward(self, X, training):
         """Perform a forward pass of data X through the model layers."""
@@ -703,24 +793,22 @@ class Model:
 X, y, X_test, y_test = create_data_mnist(DATA_PATH)
 X, y, X_test, y_test = preprocess_image_data(X, y, X_test, y_test)
 
-
-"""
 model = Model()
 
 # Add layers to the model.
-model.add(Layer_Dense(2, 512, weight_regularizer_l2=5e-4, 
-                      bias_regularizer_l2=5e-4))
+model.add(Layer_Dense(X.shape[1], 64))
 model.add(Activation_ReLU())
-model.add(Layer_Dropout(0.1))
-model.add(Layer_Dense(512, 3))
+model.add(Layer_Dense(64, 64))
+model.add(Activation_ReLU())
+model.add(Layer_Dense(64, 10))
 model.add(Activation_Softmax())
 
 # Set model properties.
 model.set(loss=Loss_CategoricalCrossentropy(),
-          optimizer=Optimizer_Adam(learning_rate=0.05, decay=5e-5),
-          accuracy=Accuracy_Categorical(binary=False))
+          optimizer=Optimizer_Adam(decay=5e-5),
+          accuracy=Accuracy_Categorical())
 model.finalize()
 
 # Train and test the model.
-model.train(X, y, epochs=10_000, print_every=100, test_data=(X_test, y_test))
-"""
+model.train(X, y, test_data=(X_test, y_test),
+            epochs=5, batch_size=128, print_every=100)
