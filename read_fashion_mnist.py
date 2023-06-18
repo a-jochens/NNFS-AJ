@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Functions for reading the previously downloaded dataset for chapter 19.
 
 import os

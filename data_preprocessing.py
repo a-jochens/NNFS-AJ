@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Functions for preprocessing datasets (from chapter 19).
 
 import numpy as np
