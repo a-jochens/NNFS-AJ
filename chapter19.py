@@ -685,9 +685,10 @@ class Model:
                     batch_X = X
                     batch_y = y
                 else:
-                    batch_slice = np.slice(step * batch_size, (step + 1) * batch_size)
-                    batch_X = X[batch_slice]
-                    batch_y = y[batch_slice]
+                    batch_start = step * batch_size
+                    batch_stop = (step + 1) * batch_size
+                    batch_X = X[batch_start : batch_stop]
+                    batch_y = y[batch_start : batch_stop]
 
                 # Perform forward pass through all layers.
                 output = self.forward(batch_X, training=True)
@@ -739,9 +740,10 @@ class Model:
                         batch_X = X_test
                         batch_y = y_test
                     else:
-                        batch_slice = np.slice(step * batch_size, (step + 1) * batch_size)
-                        batch_X = X_test[batch_slice]
-                        batch_y = y_test[batch_slice]
+                        batch_start = step * batch_size
+                        batch_stop = (step + 1) * batch_size
+                        batch_X = X_test[batch_start : batch_stop]
+                        batch_y = y_test[batch_start : batch_stop]
 
                     # Test the trained model.
                     output = self.forward(batch_X, training=False)
@@ -793,22 +795,21 @@ class Model:
 X, y, X_test, y_test = create_data_mnist(DATA_PATH)
 X, y, X_test, y_test = preprocess_image_data(X, y, X_test, y_test)
 
+# Define the model.
 model = Model()
-
-# Add layers to the model.
-model.add(Layer_Dense(X.shape[1], 64))
+model.add(Layer_Dense(X.shape[1], 128))
 model.add(Activation_ReLU())
-model.add(Layer_Dense(64, 64))
+model.add(Layer_Dense(128, 128))
 model.add(Activation_ReLU())
-model.add(Layer_Dense(64, 10))
+model.add(Layer_Dense(128, 10))
 model.add(Activation_Softmax())
 
 # Set model properties.
 model.set(loss=Loss_CategoricalCrossentropy(),
-          optimizer=Optimizer_Adam(decay=5e-5),
+          optimizer=Optimizer_Adam(decay=1e-3),
           accuracy=Accuracy_Categorical())
 model.finalize()
 
 # Train and test the model.
 model.train(X, y, test_data=(X_test, y_test),
-            epochs=5, batch_size=128, print_every=100)
+            epochs=10, batch_size=128, print_every=100)
